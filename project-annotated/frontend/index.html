@@ -1,0 +1,292 @@
+<!doctype html>
+<!--
+  ============================================================================
+  📘 ไฟล์: frontend/index.html — "โครงหน้าเว็บ" (HTML ล้วน ไม่มี logic การดึงข้อมูล)
+  ============================================================================
+  หน้านี้ "ไม่ได้ดึงข้อมูลเอง" — เป็นแค่โครง (ตาราง/ฟอร์ม/ปุ่ม) ที่ว่างเปล่า
+  ข้อมูลทั้งหมดถูกเติมโดย frontend/app.js (บรรทัด <script src="app.js"> ท้ายไฟล์นี้)
+  ซึ่งหา element จาก id ที่ประกาศในไฟล์นี้ (เช่น $("gyms-table") = <table id="gyms-table">)
+  แล้วยิง API ไปหา Gateway (src/gateway/app.js) -> บริการต่าง ๆ -> MySQL
+
+  ใครส่งไฟล์นี้ให้เบราว์เซอร์?  (FLOW-00)
+    src/gateway/app.js : app.use(express.static(path.join(ROOT, "frontend")))
+    เปิด http://localhost:3000/  -> ได้ index.html ; styles.css และ app.js ก็ถูกเสิร์ฟจากที่เดียวกัน
+
+  ตารางสรุป: element ใน HTML -> ฟังก์ชันใน app.js -> API
+  ┌──────────────────────────────────────┬──────────────────────────────────┬─────────────────────────────┐
+  │ element (id / class)                 │ ใครใช้งาน (frontend/app.js)         │ API ที่เกี่ยวข้อง              │
+  ├──────────────────────────────────────┼──────────────────────────────────┼─────────────────────────────┤
+  │ #health                              │ loadHealth()  (FLOW-01)           │ GET /health                 │
+  │ #toast                               │ toast()                           │ (แสดง message จาก Back end)   │
+  │ .tab[data-tab]                       │ tab click handler (FLOW-16)       │ ไม่มี                         │
+  │ #gyms-refresh                        │ loadGyms()  (FLOW-02)             │ GET /api/v1/gyms            │
+  │ #gyms-state / #gyms-table            │ loadGyms() เติมแถวใน <tbody>        │ GET /api/v1/gyms            │
+  │ ปุ่ม "ดูสภาพอากาศ" (สร้างโดย JS)        │ showWeather()  (FLOW-03)          │ GET /api/v1/gyms/:id/weather│
+  │ #weather-box                         │ showWeather() แสดงผลสภาพอากาศ      │ (ผลจาก FLOW-03)              │
+  │ #gym-form (+ #gym-name/#gym-address/ │ submit handler (FLOW-04/05)       │ POST /api/v1/gyms           │
+  │   #gym-fee) / #gym-cancel            │ startEditGym/cancelEditGym        │ PUT  /api/v1/gyms/:id       │
+  │ ปุ่ม "แก้ไข"/"ลบ" ของสาขา (สร้างโดย JS)  │ startEditGym / deleteGym (FLOW-05/06)│ DELETE /api/v1/gyms/:id  │
+  │ #member-form (+ #member-name/        │ submit handler (FLOW-08/09)       │ POST /api/v1/members        │
+  │   #member-email) / #member-cancel    │ startEditMember/cancelEditMember  │ PUT  /api/v1/members/:id    │
+  │ #members-refresh / #members-state /  │ loadMembers()  (FLOW-07)          │ GET /api/v1/members         │
+  │   #members-table                     │                                  │                             │
+  │ ปุ่ม "แก้ไข"/"ลบ" ของสมาชิก (สร้างโดย JS)│ startEditMember / deleteMember    │ DELETE /api/v1/members/:id  │
+  │ #sub-form (+ #sub-member/#sub-gym/   │ submit handler (FLOW-12/13)       │ POST /api/v1/subscriptions  │
+  │   #sub-date/#sub-status) / #sub-cancel│ startEditSubscription/cancel...  │ PUT  /api/v1/subscriptions/:id│
+  │ #sub-member, #sub-gym (<select>)     │ fillMemberSelect/fillGymSelect    │ ใช้ข้อมูลของ FLOW-07 / FLOW-02 │
+  │                                      │ (FLOW-15)                         │                             │
+  │ #sub-search / #sub-search-name /     │ loadSubscriptions()  (FLOW-11)    │ GET /api/v1/subscriptions   │
+  │   #sub-search-clear                  │                                  │   ?member_name=...          │
+  │ #subs-state / #subs-table            │ loadSubscriptions() เติมแถว         │ GET /api/v1/subscriptions   │
+  │ ปุ่ม "แก้ไข"/"ลบ" ของการสมัคร (สร้างโดย JS)│ startEditSubscription / deleteSubscription│ DELETE /api/v1/subscriptions/:id │
+  │ ลิงก์ "เอกสาร API (Swagger UI)"        │ (ลิงก์ธรรมดา)  (FLOW-17)            │ GET /api-docs/              │
+  └──────────────────────────────────────┴──────────────────────────────────┴─────────────────────────────┘
+  หมายเหตุ: <small class="field-error" id="xxx-error"> คือที่แสดงข้อความ error ใต้ช่องกรอก
+            (ฟังก์ชัน setFieldError("xxx", ข้อความ) ใน app.js หา element จาก id + "-error")
+  ฟอร์มทุกอัน novalidate = ปิดการตรวจของเบราว์เซอร์ เพราะ app.js ตรวจเอง (validateXxxForm)
+  ============================================================================
+-->
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ระบบข้อมูลฟิตเนส</title>
+    <!-- โหลด CSS: เบราว์เซอร์ขอ GET /styles.css จาก Gateway (express.static) -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-row">
+        <h1 class="brand">ระบบข้อมูลฟิตเนส</h1>
+        <!-- FLOW-16: ปุ่มแท็บ 3 ปุ่ม — data-tab ตรงกับ id ของ section ด้านล่าง (tab-gyms / tab-members / tab-subscriptions)
+             app.js: document.querySelectorAll(".tab") ผูก click เพื่อซ่อน/แสดง section (ไม่ยิง API) -->
+        <nav class="tabs" aria-label="เมนูหลัก">
+          <button type="button" class="tab active" data-tab="gyms">สาขาและราคา</button>
+          <button type="button" class="tab" data-tab="members">สมาชิก</button>
+          <button type="button" class="tab" data-tab="subscriptions">การสมัครแพ็กเกจ</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container">
+      <div class="card intro">
+        <p>จัดการสาขา สมาชิก และการสมัครแพ็กเกจ</p>
+        <!-- FLOW-01: กล่องสถานะระบบ — loadHealth() ใน app.js เขียนข้อความ/สี (class ok|bad) ที่นี่
+             ข้อความเริ่มต้น "กำลังตรวจสอบ..." ถูกแทนที่เมื่อ GET /health ตอบกลับ ; ข้อมูลมาจาก gateway/app.js app.get("/health") -->
+        <div id="health" class="health" role="status" aria-live="polite">
+          กำลังตรวจสอบสถานะระบบ...
+        </div>
+      </div>
+
+      <!-- กล่องแจ้งเตือน (popup มุมจอ): ซ่อนไว้ (hidden) จนกว่า toast() ใน app.js จะเขียนข้อความ
+           แสดง message ที่ Back end ตอบ เช่น "เพิ่มข้อมูลสาขาฟิตเนสสำเร็จ" หรือข้อความ error สีแดง -->
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+      <!-- ===== สาขาและราคา ===== -->
+      <!-- แท็บที่ 1: ติดต่อ gym-service (ผ่าน Gateway /api/v1/gyms) -> ตาราง gyms ใน MySQL -->
+      <section id="tab-gyms" class="panel">
+        <div class="card">
+          <div class="card-head">
+            <h2>รายการสาขาและราคา</h2>
+            <!-- ปุ่ม "โหลดใหม่": app.js ผูก $("gyms-refresh").addEventListener("click", loadGyms) -> FLOW-02
+                 = GET /api/v1/gyms -> gym-service app.get("/gyms") -> SELECT FROM gyms -->
+            <button type="button" id="gyms-refresh" class="btn secondary">โหลดใหม่</button>
+          </div>
+          <!-- กล่องสถานะ (กำลังโหลด / error / ว่าง): เขียนโดย setState() ใน loadGyms() -->
+          <div id="gyms-state" class="state" hidden></div>
+          <div class="table-wrap">
+            <!-- ตารางสาขา: ซ่อนไว้ก่อน; loadGyms() สร้าง <tr> เติมใน <tbody> จากข้อมูล GET /api/v1/gyms
+                 คอลัมน์ 4 ช่องแรกตรงกับฟิลด์ gym_id, name, address, monthly_fee ของตาราง gyms
+                 คอลัมน์ "การทำงาน" = ปุ่ม [ดูสภาพอากาศ] [แก้ไข] [ลบ] ที่ JS สร้างต่อแถว -->
+            <table id="gyms-table" hidden>
+              <thead>
+                <tr>
+                  <th>รหัส</th>
+                  <th>ชื่อสาขา</th>
+                  <th>ที่อยู่</th>
+                  <th class="num">ค่าบริการ/เดือน (บาท)</th>
+                  <th>การทำงาน</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <!-- FLOW-03: กล่องแสดงผลสภาพอากาศ — showWeather() เขียนข้อความที่นี่หลังกดปุ่ม "ดูสภาพอากาศ" ของสาขา
+               ข้อมูลมาจาก GET /api/v1/gyms/:id/weather (gym-service + Open-Meteo) -->
+          <div id="weather-box" class="weather" role="status" aria-live="polite" hidden></div>
+        </div>
+
+        <div class="card">
+          <!-- หัวข้อฟอร์ม: enterEditMode()/exitEditMode() เปลี่ยนข้อความเป็น "แก้ไขสาขา #n" / "เพิ่มสาขาใหม่" -->
+          <h2 id="gym-form-title">เพิ่มสาขาใหม่ (ผู้ดูแลระบบ)</h2>
+          <!-- FLOW-04 / FLOW-05: ฟอร์มเดียว 2 โหมด — submit handler ใน app.js: $("gym-form").addEventListener("submit", ...)
+               โหมดเพิ่ม  -> POST /api/v1/gyms      -> gym-service app.post("/gyms")      -> INSERT INTO gyms
+               โหมดแก้ไข -> PUT  /api/v1/gyms/:id  -> gym-service app.put("/gyms/:id")  -> UPDATE gyms
+               (โหมดแก้ไขเริ่มเมื่อกดปุ่ม "แก้ไข" ที่แถวสาขา) -->
+          <form id="gym-form" novalidate>
+            <div class="field">
+              <label for="gym-name">ชื่อสาขา</label>
+              <!-- ส่งเป็นฟิลด์ name ใน JSON body (maxlength 150 ตรงกับ VARCHAR(150) ของคอลัมน์ gyms.name) -->
+              <input id="gym-name" name="name" type="text" maxlength="150" autocomplete="off" />
+              <small class="field-error" id="gym-name-error"></small>
+            </div>
+            <div class="field">
+              <label for="gym-address">ที่อยู่</label>
+              <!-- ส่งเป็นฟิลด์ address (คอลัมน์ gyms.address ชนิด TEXT) -->
+              <textarea id="gym-address" name="address" rows="2"></textarea>
+              <small class="field-error" id="gym-address-error"></small>
+            </div>
+            <div class="field">
+              <label for="gym-fee">ค่าบริการรายเดือน (บาท)</label>
+              <!-- ส่งเป็นฟิลด์ monthly_fee (คอลัมน์ gyms.monthly_fee ชนิด INT) ; app.js แปลงเป็น Number ก่อนส่ง -->
+              <input id="gym-fee" name="monthly_fee" type="number" min="0" step="1" inputmode="numeric" />
+              <small class="field-error" id="gym-fee-error"></small>
+            </div>
+            <div class="actions">
+              <!-- ปุ่ม submit: ข้อความเปลี่ยนเป็น "บันทึกการแก้ไข" ตอนอยู่โหมดแก้ไข (เป็นปุ่มเดียวกัน) -->
+              <button type="submit" class="btn primary">บันทึกสาขา</button>
+              <!-- ปุ่ม "ยกเลิกการแก้ไข": ซ่อนไว้ จะโชว์เฉพาะโหมดแก้ไข -> cancelEditGym() (ไม่ยิง API) -->
+              <button type="button" id="gym-cancel" class="btn secondary" hidden>ยกเลิกการแก้ไข</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ===== สมาชิก ===== -->
+      <!-- แท็บที่ 2: ติดต่อ member-service (ผ่าน Gateway /api/v1/members) -> ตาราง members ใน MySQL -->
+      <section id="tab-members" class="panel" hidden>
+        <div class="card">
+          <h2 id="member-form-title">ลงทะเบียนสมาชิกใหม่ (พนักงาน)</h2>
+          <!-- FLOW-08 / FLOW-09: ฟอร์มสมาชิก 2 โหมด — submit handler: $("member-form").addEventListener("submit", ...)
+               โหมดลงทะเบียน -> POST /api/v1/members     -> member-service app.post("/members")     -> INSERT INTO members
+               โหมดแก้ไข      -> PUT  /api/v1/members/:id -> member-service app.put("/members/:id") -> UPDATE members
+               อีเมลซ้ำ -> 409 DUPLICATE_EMAIL แสดงใต้ช่อง #member-email-error -->
+          <form id="member-form" novalidate>
+            <div class="field">
+              <label for="member-name">ชื่อ-นามสกุล</label>
+              <!-- ส่งเป็นฟิลด์ name (members.name VARCHAR(150)) -->
+              <input id="member-name" name="name" type="text" maxlength="150" autocomplete="off" />
+              <small class="field-error" id="member-name-error"></small>
+            </div>
+            <div class="field">
+              <label for="member-email">อีเมล</label>
+              <!-- ส่งเป็นฟิลด์ email (members.email VARCHAR(150) UNIQUE) -->
+              <input id="member-email" name="email" type="email" maxlength="150" autocomplete="off" />
+              <small class="field-error" id="member-email-error"></small>
+            </div>
+            <div class="actions">
+              <button type="submit" class="btn primary">ลงทะเบียน</button>
+              <!-- ปุ่มยกเลิกโหมดแก้ไข -> cancelEditMember() (ไม่ยิง API) -->
+              <button type="button" id="member-cancel" class="btn secondary" hidden>ยกเลิกการแก้ไข</button>
+            </div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2>รายชื่อสมาชิก</h2>
+            <!-- ปุ่ม "โหลดใหม่" -> loadMembers() = FLOW-07 : GET /api/v1/members -> SELECT FROM members -->
+            <button type="button" id="members-refresh" class="btn secondary">โหลดใหม่</button>
+          </div>
+          <div id="members-state" class="state" hidden></div>
+          <div class="table-wrap">
+            <!-- ตารางสมาชิก: loadMembers() เติมแถว (member_id, name, email + ปุ่ม [แก้ไข] [ลบ]) -->
+            <table id="members-table" hidden>
+              <thead>
+                <tr><th>รหัส</th><th>ชื่อ</th><th>อีเมล</th><th>การทำงาน</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== การสมัครแพ็กเกจ ===== -->
+      <!-- แท็บที่ 3: ติดต่อ subscription-service (ผ่าน Gateway /api/v1/subscriptions)
+           -> ตาราง subscriptions (+ JOIN members, gyms) ใน MySQL -->
+      <section id="tab-subscriptions" class="panel" hidden>
+        <div class="card">
+          <h2 id="sub-form-title">บันทึกการสมัครแพ็กเกจ (พนักงาน)</h2>
+          <!-- FLOW-12 / FLOW-13: ฟอร์มการสมัคร 2 โหมด — submit handler: $("sub-form").addEventListener("submit", ...)
+               โหมดเพิ่ม  -> POST /api/v1/subscriptions     (Back end ถาม member-service + gym-service ก่อน INSERT)
+               โหมดแก้ไข -> PUT  /api/v1/subscriptions/:id (Back end ถาม gym-service แล้ว UPDATE) -->
+          <form id="sub-form" novalidate>
+            <div class="field">
+              <label for="sub-member">สมาชิก</label>
+              <!-- dropdown สมาชิก: ว่างเปล่าในไฟล์นี้ — fillMemberSelect() เติมตัวเลือกจากผล GET /api/v1/members (FLOW-07/15)
+                   value ของแต่ละตัวเลือก = member_id -> ส่งเป็น member_id ใน body -->
+              <select id="sub-member" name="member_id"></select>
+              <small class="field-error" id="sub-member-error"></small>
+            </div>
+            <div class="field">
+              <label for="sub-gym">สาขา</label>
+              <!-- dropdown สาขา: fillGymSelect() เติมจากผล GET /api/v1/gyms (FLOW-02/15) ; value = gym_id -->
+              <select id="sub-gym" name="gym_id"></select>
+              <small class="field-error" id="sub-gym-error"></small>
+            </div>
+            <div class="field">
+              <label for="sub-date">วันที่เริ่ม (ไม่ระบุ = วันนี้)</label>
+              <!-- ให้ค่า "YYYY-MM-DD" -> start_date ; เว้นว่าง = ไม่ส่งฟิลด์ -> Back end ใช้ COALESCE(?, CURDATE()) -->
+              <input id="sub-date" name="start_date" type="date" />
+              <small class="field-error" id="sub-date-error"></small>
+            </div>
+            <!-- ช่อง "สถานะ": ซ่อนไว้ตอนเพิ่ม (Back end ตั้ง 'active' เอง) ; startEditSubscription() เปิดให้เห็นเฉพาะโหมดแก้ไข
+                 ตัวเลือก 3 ค่านี้ต้องตรงกับ SUBSCRIPTION_STATUSES ใน src/shared/validators.js -->
+            <div class="field" id="sub-status-field" hidden>
+              <label for="sub-status">สถานะ</label>
+              <select id="sub-status" name="status">
+                <option value="active">active (ใช้งานอยู่)</option>
+                <option value="expired">expired (หมดอายุ)</option>
+                <option value="cancelled">cancelled (ยกเลิก)</option>
+              </select>
+              <small class="field-error" id="sub-status-error"></small>
+            </div>
+            <div class="actions">
+              <button type="submit" class="btn primary">บันทึกการสมัคร</button>
+              <!-- ปุ่มยกเลิกโหมดแก้ไข -> cancelEditSubscription() (ไม่ยิง API) -->
+              <button type="button" id="sub-cancel" class="btn secondary" hidden>ยกเลิกการแก้ไข</button>
+            </div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2>ประวัติการสมัครแพ็กเกจ (ผู้ดูแลระบบ)</h2>
+          </div>
+          <!-- FLOW-11: ฟอร์มค้นหา — ปุ่ม "ค้นหา" (submit) และ "ล้าง" ใน app.js เรียก loadSubscriptions()
+               ซึ่งอ่านคำค้นจาก #sub-search-name แล้วยิง GET /api/v1/subscriptions?member_name=คำค้น
+               -> subscription-service ทำ SQL ... WHERE m.name LIKE '%คำค้น%' -->
+          <form id="sub-search" class="inline" novalidate>
+            <label for="sub-search-name" class="sr-only">ค้นหาด้วยชื่อสมาชิก</label>
+            <input id="sub-search-name" type="search" placeholder="ค้นหาด้วยชื่อสมาชิก" />
+            <button type="submit" class="btn secondary">ค้นหา</button>
+            <button type="button" id="sub-search-clear" class="btn secondary">ล้าง</button>
+          </form>
+          <div id="subs-state" class="state" hidden></div>
+          <div class="table-wrap">
+            <!-- ตารางประวัติการสมัคร: loadSubscriptions() เติมแถว
+                 คอลัมน์ รหัส/สมาชิก/สาขา/ค่าบริการ/เริ่มวันที่/สถานะ ตรงกับผล SQL JOIN (subscription_id, member_name,
+                 gym_name, monthly_fee, start_date, status) + คอลัมน์ปุ่ม [แก้ไข] [ลบ] -->
+            <table id="subs-table" hidden>
+              <thead>
+                <tr>
+                  <th>รหัส</th><th>สมาชิก</th><th>สาขา</th>
+                  <th class="num">ค่าบริการ</th><th>เริ่มวันที่</th><th>สถานะ</th><th>การทำงาน</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="container footer">
+      เรียก API ผ่าน API Gateway ·
+      <!-- FLOW-17: ลิงก์เปิด Swagger UI (เอกสาร API จาก openapi.yaml) — Gateway ตอบที่ app.use("/api-docs", swaggerUi...) -->
+      <a href="/api-docs/" target="_blank" rel="noopener">เอกสาร API (Swagger UI)</a>
+    </footer>
+
+    <!-- โหลดและรัน frontend/app.js (FLOW-00): ตอนรันจะยิง 4 งานทันที — loadHealth, loadGyms, loadMembers, loadSubscriptions
+         ต้องอยู่ท้าย body เพื่อให้ element ด้านบนทั้งหมดถูกสร้างก่อนที่ app.js จะหาด้วย id -->
+    <script src="app.js"></script>
+  </body>
+</html>

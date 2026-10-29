@@ -1,0 +1,51 @@
+{
+  "name": "fitness_db",
+  "version": "3.0.0",
+  "description": "ระบบข้อมูลฟิตเนส - โครงงานระยะที่ 3 (Final Integration: Microservices + API Gateway + Frontend)",
+  "main": "src/start-all.js",
+  "scripts": {
+    "start": "node src/start-all.js",
+    "dev": "nodemon --watch src --watch openapi.yaml --watch frontend --ext js,yaml,html,css src/start-all.js",
+    "start:gateway": "node src/gateway/server.js",
+    "start:gym": "node src/gym-service/server.js",
+    "start:member": "node src/member-service/server.js",
+    "start:subscription": "node src/subscription-service/server.js",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "js-yaml": "^4.1.0",
+    "morgan": "^1.11.0",
+    "mysql2": "^3.23.3",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "jest": "^30.0.0",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.1.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/src/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/tests/**",
+      "!src/**/server.js",
+      "!src/start-all.js"
+    ],
+    "coverageDirectory": "coverage"
+  }
+}

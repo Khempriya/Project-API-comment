@@ -1,0 +1,1107 @@
+# ============================================================================
+# 📘 ไฟล์: openapi.yaml — "เอกสาร API" (มาตรฐาน OpenAPI 3.0) ของระบบทั้งหมด
+# ============================================================================
+# ไฟล์นี้ "ไม่ได้ถูกใช้ตอนหน้าเว็บดึงข้อมูล" — เป็นคำอธิบาย (สัญญา) ว่าแต่ละ endpoint รับ/ส่งอะไร
+# ใช้ใน 2 ที่:
+#   1) src/gateway/app.js  อ่านไฟล์นี้ด้วย js-yaml แล้วแสดงเป็น Swagger UI ที่ http://localhost:3000/api-docs/
+#        (ลิงก์ "เอกสาร API (Swagger UI)" ที่ footer ของ frontend/index.html = FLOW-17)
+#        ในหน้า Swagger กดปุ่ม "Try it out" ยิง API จริงผ่าน Gateway ได้ โดยไม่ต้องผ่านหน้าเว็บ
+#   2) src/tests/openapi-sync.test.js  ตรวจอัตโนมัติว่า endpoint ในไฟล์นี้ = route จริงในโค้ด (ไม่ขาด ไม่เกิน)
+#
+# ตาราง endpoint -> โค้ดจริง (ทุก path ต้องมี route ตรงกันใน services; ถ้าเพิ่ม/ลบ route ต้องแก้ไฟล์นี้ให้ตรงด้วย
+# ไม่เช่นนั้นเทสต์ openapi-sync จะล้ม):
+#   /health                       -> src/gateway/app.js        app.get("/health")                 (FLOW-01)
+#   GET    /api/v1/gyms           -> src/gym-service/app.js    app.get("/gyms")                   (FLOW-02)
+#   POST   /api/v1/gyms           -> src/gym-service/app.js    app.post("/gyms")                  (FLOW-04)
+#   GET    /api/v1/gyms/{id}      -> src/gym-service/app.js    app.get("/gyms/:id")               (ใช้ภายใน)
+#   PUT    /api/v1/gyms/{id}      -> src/gym-service/app.js    app.put("/gyms/:id")               (FLOW-05)
+#   DELETE /api/v1/gyms/{id}      -> src/gym-service/app.js    app.delete("/gyms/:id")            (FLOW-06)
+#   GET    /api/v1/gyms/{id}/weather -> src/gym-service/app.js app.get("/gyms/:id/weather")       (FLOW-03)
+#   GET    /api/v1/members        -> src/member-service/app.js app.get("/members")                (FLOW-07)
+#   POST   /api/v1/members        -> src/member-service/app.js app.post("/members")               (FLOW-08)
+#   GET    /api/v1/members/{id}   -> src/member-service/app.js app.get("/members/:id")            (ใช้ภายใน)
+#   PUT    /api/v1/members/{id}   -> src/member-service/app.js app.put("/members/:id")            (FLOW-09)
+#   DELETE /api/v1/members/{id}   -> src/member-service/app.js app.delete("/members/:id")         (FLOW-10)
+#   GET    /api/v1/subscriptions  -> src/subscription-service/app.js app.get("/subscriptions")    (FLOW-11)
+#   POST   /api/v1/subscriptions  -> src/subscription-service/app.js app.post("/subscriptions")   (FLOW-12)
+#   PUT    /api/v1/subscriptions/{id}    -> ... app.put("/subscriptions/:id")                     (FLOW-13)
+#   DELETE /api/v1/subscriptions/{id}    -> ... app.delete("/subscriptions/:id")                  (FLOW-14)
+# หมายเหตุ: ที่ Gateway ใช้ /api/v1/xxx แต่ service ปลายทางใช้ /xxx (Gateway ตัด /api/v1 ออกก่อนส่งต่อ)
+# ============================================================================
+openapi: 3.0.3
+info:
+  title: ระบบข้อมูลฟิตเนส API
+  version: 3.0.0
+  description: |
+    API สำหรับจัดการเครือข่ายสาขาฟิตเนส สมาชิก และการสมัครแพ็กเกจ
+    (โครงงานระยะที่ 3: Final Integration)
+
+    ระบบแบ่งเป็น Microservices ด้านหลัง API Gateway (พอร์ต 3000) ทุก endpoint ด้านล่างเรียกผ่าน Gateway:
+
+    | เส้นทางที่ Gateway | บริการปลายทาง | พอร์ต |
+    | --- | --- | --- |
+    | `/api/v1/gyms` | gym-service | 4001 |
+    | `/api/v1/members` | member-service | 4002 |
+    | `/api/v1/subscriptions` | subscription-service | 4003 |
+
+    - ทุก error ใช้รูปแบบเดียวกัน: `{ "error": { "code": "...", "message": "..." } }`
+    - ถ้าบริการปลายทางไม่พร้อมใช้งาน Gateway ตอบ **503** (`SERVICE_UNAVAILABLE`) แทนการค้างหรือ crash
+    - endpoint `/api/v1/gyms/{id}/weather` เรียก Open-Meteo โดยมี timeout, retry และ fallback
+servers:
+  - url: http://localhost:3000
+    description: Local development
+tags:
+  - name: System
+    description: สถานะของระบบ
+  - name: Gyms
+    description: ข้อมูลสาขาฟิตเนสและราคา
+  - name: Members
+    description: สมาชิก
+  - name: Subscriptions
+    description: การสมัครแพ็กเกจของสมาชิก
+  - name: External
+    description: การเชื่อมต่อ API ภายนอก
+paths:
+  # ▶ FLOW-01: แถบ "สถานะระบบ" ในหน้าเว็บ (loadHealth ใน frontend/app.js) -> gateway/app.js app.get("/health")
+  #   Gateway ถาม /health ของทั้ง 3 บริการแล้วสรุปเป็น ok/degraded (เป็น route ของ Gateway เอง ไม่มี /api/v1 นำหน้า)
+  /health:
+    get:
+      tags: [System]
+      summary: ตรวจสถานะของ Gateway และทุกบริการ
+      description: Gateway ถามแต่ละบริการด้วย `GET /health` (รอสูงสุด 1 วินาทีต่อบริการ) ตอบ 200 เสมอ ถ้ามีบริการที่ไม่ตอบ `status` จะเป็น `degraded`
+      operationId: getHealth
+      responses:
+        "200":
+          description: สถานะของระบบ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, gateway, services]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  gateway:
+                    type: string
+                    example: up
+                  services:
+                    type: object
+                    required: [gym, member, subscription]
+                    properties:
+                      gym:
+                        type: string
+                        enum: [up, down]
+                      member:
+                        type: string
+                        enum: [up, down]
+                      subscription:
+                        type: string
+                        enum: [up, down]
+              examples:
+                allUp:
+                  summary: ทุกบริการพร้อม
+                  value:
+                    status: ok
+                    gateway: up
+                    services:
+                      gym: up
+                      member: up
+                      subscription: up
+                degraded:
+                  summary: member-service ไม่ตอบ
+                  value:
+                    status: degraded
+                    gateway: up
+                    services:
+                      gym: up
+                      member: down
+                      subscription: up
+  # ▶ GET = FLOW-02 (loadGyms: เปิดหน้า/ปุ่ม "โหลดใหม่") -> gym-service SELECT FROM gyms
+  # ▶ POST = FLOW-04 (ปุ่ม "บันทึกสาขา" โหมดเพิ่ม) -> gym-service INSERT INTO gyms
+  /api/v1/gyms:
+    get:
+      tags: [Gyms]
+      summary: ดูรายการสาขาและราคาทั้งหมด
+      description: ผู้ใช้ทั่วไปดูได้ (UC3) ถ้ายังไม่มีสาขาจะตอบ 200 พร้อม `data` เป็น array ว่างและข้อความ "ยังไม่มีข้อมูลสาขาฟิตเนส"
+      operationId: listGyms
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: ดึงข้อมูลสาขาฟิตเนสสำเร็จ
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Gym"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Gyms]
+      summary: เพิ่มสาขาใหม่ (ผู้ดูแลระบบ)
+      operationId: createGym
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GymInput"
+            example:
+              name: Fit Plus Rayong
+              address: 99 ถนนสุขุมวิท ระยอง
+              monthly_fee: 1400
+      responses:
+        "201":
+          description: เพิ่มสาขาสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: เพิ่มข้อมูลสาขาฟิตเนสสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Gym"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  # ▶ GET = ใช้ภายใน (subscription-service ตรวจว่าสาขามีจริง) / PUT = FLOW-05 (ปุ่ม "บันทึกการแก้ไข" สาขา) / DELETE = FLOW-06 (ปุ่ม "ลบ" สาขา)
+  /api/v1/gyms/{id}:
+    parameters:
+      - $ref: "#/components/parameters/GymId"
+    get:
+      tags: [Gyms]
+      summary: ดูข้อมูลสาขาตาม id
+      operationId: getGym
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: ดึงข้อมูลสาขาฟิตเนสสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Gym"
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          $ref: "#/components/responses/GymNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Gyms]
+      summary: แก้ไขข้อมูลสาขา (ผู้ดูแลระบบ)
+      description: แทนที่ข้อมูลทั้งรายการ ต้องส่งครบทุกฟิลด์
+      operationId: updateGym
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GymInput"
+            example:
+              name: Fit Plus Bangsaen
+              address: 123 ถนนลงหาดบางแสน ชลบุรี
+              monthly_fee: 1300
+      responses:
+        "200":
+          description: อัปเดตสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: อัปเดตข้อมูลสาขาฟิตเนสสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Gym"
+        "400":
+          description: id หรือข้อมูลที่ส่งมาไม่ถูกต้อง (`INVALID_ID` หรือ `VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: id ไม่ใช่จำนวนเต็มบวก
+                  value:
+                    error:
+                      code: INVALID_ID
+                      message: รหัสต้องเป็นจำนวนเต็มบวก
+                validation:
+                  summary: ข้อมูลไม่ครบ
+                  value:
+                    error:
+                      code: VALIDATION_ERROR
+                      message: "ข้อมูลไม่ครบถ้วนหรือไม่ถูกต้อง: monthly_fee ต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป"
+                malformedJson:
+                  summary: body ไม่ใช่ JSON ที่ถูกต้อง
+                  value:
+                    error:
+                      code: entity.parse.failed
+                      message: "Expected property name or '}' in JSON at position 2"
+        "404":
+          $ref: "#/components/responses/GymNotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Gyms]
+      summary: ลบสาขา (ผู้ดูแลระบบ)
+      description: ลบสาขาพร้อมประวัติการสมัครทั้งหมดของสาขานั้น (ON DELETE CASCADE)
+      operationId: deleteGym
+      responses:
+        "200":
+          description: ลบสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    example: ลบสาขาฟิตเนสและประวัติการสมัครที่เกี่ยวข้องสำเร็จ
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          $ref: "#/components/responses/GymNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  # ▶ FLOW-03: ปุ่ม "ดูสภาพอากาศ" (showWeather) -> gym-service app.get("/gyms/:id/weather") -> weather.js -> Open-Meteo (มี timeout/retry/fallback)
+  /api/v1/gyms/{id}/weather:
+    parameters:
+      - $ref: "#/components/parameters/GymId"
+    get:
+      tags: [External]
+      summary: ดูสภาพอากาศบริเวณสาขา (เรียก Open-Meteo)
+      description: |
+        เรียก API ภายนอก (Open-Meteo) พร้อมกลไกทนต่อความผิดพลาด
+
+        - **Timeout**: รอสูงสุด 3 วินาทีต่อครั้ง (`EXTERNAL_API_TIMEOUT_MS`)
+        - **Retry**: ถ้า network error / timeout / HTTP 5xx / 429 จะลองใหม่อีก 2 ครั้ง
+          (`EXTERNAL_API_MAX_RETRIES`) โดยรอ 500ms แล้ว 1000ms (exponential backoff)
+        - **Fallback**: ถ้ายังล้มเหลวจะตอบ **200** พร้อม `weather.available = false` และข้อความอธิบาย
+          แทนการตอบ error เพราะข้อมูลสาขายังใช้งานได้ปกติ
+      operationId: getGymWeather
+      responses:
+        "200":
+          description: สำเร็จ (อาจเป็นข้อมูลสดหรือ fallback ดูที่ `data.weather.available`)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    required: [gym, weather]
+                    properties:
+                      gym:
+                        type: object
+                        required: [gym_id, name]
+                        properties:
+                          gym_id:
+                            type: integer
+                            example: 1
+                          name:
+                            type: string
+                            example: Fit Plus Bangsaen
+                      weather:
+                        oneOf:
+                          - $ref: "#/components/schemas/WeatherLive"
+                          - $ref: "#/components/schemas/WeatherFallback"
+              examples:
+                live:
+                  summary: ดึงจาก Open-Meteo ได้
+                  value:
+                    message: ดึงข้อมูลสภาพอากาศสำเร็จ
+                    data:
+                      gym:
+                        gym_id: 1
+                        name: Fit Plus Bangsaen
+                      weather:
+                        available: true
+                        source: open-meteo
+                        temperature_c: 31.2
+                        humidity_percent: 68
+                        precipitation_mm: 0
+                        wind_speed_kmh: 12.4
+                        condition: มีเมฆบางส่วนถึงมีเมฆมาก
+                        observed_at: "2026-10-10T14:00"
+                fallback:
+                  summary: API ภายนอกล้มเหลวหลัง retry ครบ
+                  value:
+                    message: ดึงข้อมูลสาขาสำเร็จ แต่ไม่สามารถดึงข้อมูลสภาพอากาศได้ในขณะนี้
+                    data:
+                      gym:
+                        gym_id: 1
+                        name: Fit Plus Bangsaen
+                      weather:
+                        available: false
+                        source: fallback
+                        message: ไม่สามารถดึงข้อมูลสภาพอากาศได้ในขณะนี้ กรุณาลองใหม่อีกครั้งภายหลัง
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          $ref: "#/components/responses/GymNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  # ▶ GET = FLOW-07 (loadMembers) -> member-service SELECT FROM members
+  # ▶ POST = FLOW-08 (ปุ่ม "ลงทะเบียน") -> member-service INSERT (อีเมลซ้ำ -> 409 DUPLICATE_EMAIL)
+  /api/v1/members:
+    get:
+      tags: [Members]
+      summary: ดูรายชื่อสมาชิกทั้งหมด
+      description: ใช้เลือกสมาชิกตอนบันทึกการสมัครแพ็กเกจ ถ้ายังไม่มีสมาชิกจะตอบ 200 พร้อม `data` เป็น array ว่างและข้อความ "ยังไม่มีข้อมูลสมาชิก"
+      operationId: listMembers
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: ดึงข้อมูลสมาชิกสำเร็จ
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Member"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Members]
+      summary: ลงทะเบียนสมาชิกใหม่ (พนักงาน)
+      operationId: createMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberInput"
+            example:
+              name: สมศักดิ์ มั่นคง
+              email: somsak@example.com
+      responses:
+        "201":
+          description: ลงทะเบียนสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: ลงทะเบียนสมาชิกสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          description: อีเมลนี้มีอยู่ในระบบแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: DUPLICATE_EMAIL
+                  message: อีเมลนี้มีอยู่ในระบบแล้ว
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  # ▶ GET = ใช้ภายใน (subscription-service ตรวจว่าสมาชิกมีจริง) / PUT = FLOW-09 ("บันทึกการแก้ไข" สมาชิก) / DELETE = FLOW-10 (ปุ่ม "ลบ" สมาชิก)
+  /api/v1/members/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: รหัสสมาชิก (member_id)
+        schema:
+          type: integer
+          minimum: 1
+        example: 1
+    get:
+      tags: [Members]
+      summary: ดูข้อมูลสมาชิกตาม id
+      description: member-service ใช้ endpoint นี้ให้ subscription-service ตรวจว่าสมาชิกมีอยู่จริงก่อนบันทึกการสมัคร
+      operationId: getMember
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: ดึงข้อมูลสมาชิกสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          description: ไม่พบสมาชิกที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: MEMBER_NOT_FOUND
+                  message: ไม่พบสมาชิกที่ระบุ
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Members]
+      summary: แก้ไขข้อมูลสมาชิก (พนักงาน)
+      description: แทนที่ข้อมูลทั้งรายการ ต้องส่งครบทุกฟิลด์ อีเมลต้องไม่ซ้ำกับสมาชิกคนอื่น
+      operationId: updateMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberInput"
+            example:
+              name: สมศักดิ์ มั่นคง
+              email: somsak.new@example.com
+      responses:
+        "200":
+          description: อัปเดตสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: อัปเดตข้อมูลสมาชิกสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/MemberNotFound"
+        "409":
+          description: อีเมลนี้มีอยู่ในระบบแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: DUPLICATE_EMAIL
+                  message: อีเมลนี้มีอยู่ในระบบแล้ว
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Members]
+      summary: ลบสมาชิก (พนักงาน)
+      description: ลบสมาชิกพร้อมประวัติการสมัครทั้งหมดของสมาชิกคนนั้น (ON DELETE CASCADE)
+      operationId: deleteMember
+      responses:
+        "200":
+          description: ลบสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    example: ลบสมาชิกและประวัติการสมัครที่เกี่ยวข้องสำเร็จ
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          $ref: "#/components/responses/MemberNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  # ▶ GET = FLOW-11 (loadSubscriptions: เปิดหน้า/"ค้นหา"/"ล้าง" ; query member_name) -> SQL JOIN subscriptions+members+gyms
+  # ▶ POST = FLOW-12 (ปุ่ม "บันทึกการสมัคร") -> ตรวจสมาชิก+สาขากับอีก 2 บริการ แล้ว INSERT
+  /api/v1/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: ดูประวัติการสมัครแพ็กเกจทั้งหมด (ผู้ดูแลระบบ)
+      description: รวมข้อมูลสมาชิกและสาขา ค้นหาด้วยชื่อสมาชิกได้ ถ้าไม่พบจะตอบ 200 พร้อม `data` เป็น array ว่างและข้อความ "ไม่พบประวัติการสมัครในขณะนี้"
+      operationId: listSubscriptions
+      parameters:
+        - name: member_name
+          in: query
+          required: false
+          description: ค้นหาด้วยชื่อสมาชิก (ตรงบางส่วนก็ได้)
+          schema:
+            type: string
+          example: สมชาย
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: ดึงข้อมูลประวัติการสมัครสำเร็จ
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SubscriptionDetail"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Subscriptions]
+      summary: บันทึกการสมัครแพ็กเกจ (พนักงาน)
+      description: สถานะเริ่มต้นเป็น `active` ถ้าไม่ส่ง `start_date` จะใช้วันที่ปัจจุบัน สมาชิก 1 คนสมัครสาขาเดิมซ้ำไม่ได้
+      operationId: createSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionInput"
+            example:
+              member_id: 3
+              gym_id: 2
+              start_date: "2026-10-10"
+      responses:
+        "201":
+          description: บันทึกการสมัครสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: บันทึกการสมัครแพ็กเกจสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Subscription"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: ไม่พบสมาชิกหรือสาขาที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                memberNotFound:
+                  value:
+                    error:
+                      code: MEMBER_NOT_FOUND
+                      message: ไม่พบสมาชิกที่ระบุ
+                gymNotFound:
+                  value:
+                    error:
+                      code: GYM_NOT_FOUND
+                      message: ไม่พบสาขาฟิตเนสที่ระบุ
+        "409":
+          description: สมาชิกคนนี้เคยสมัครสาขานี้ไปแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: ALREADY_SUBSCRIBED
+                  message: สมาชิกคนนี้เคยสมัครสาขานี้ไปแล้ว
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  # ▶ PUT = FLOW-13 (ปุ่ม "บันทึกการแก้ไข" ของการสมัคร: เปลี่ยนสาขา/วันที่/สถานะ) / DELETE = FLOW-14 (ปุ่ม "ลบ" การสมัคร)
+  /api/v1/subscriptions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: รหัสการสมัครแพ็กเกจ (subscription_id)
+        schema:
+          type: integer
+          minimum: 1
+        example: 1
+    put:
+      tags: [Subscriptions]
+      summary: แก้ไขการสมัครแพ็กเกจ (พนักงาน)
+      description: เปลี่ยนสาขา วันที่เริ่ม และสถานะ (`active`, `expired`, `cancelled`) ต้องส่งครบทุกฟิลด์ สมาชิกของการสมัครเปลี่ยนไม่ได้ สมาชิกคนเดิมเลือกสาขาซ้ำกับที่เคยสมัครไม่ได้
+      operationId: updateSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionUpdateInput"
+            example:
+              gym_id: 2
+              start_date: "2026-11-01"
+              status: cancelled
+      responses:
+        "200":
+          description: อัปเดตสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, data]
+                properties:
+                  message:
+                    type: string
+                    example: อัปเดตการสมัครแพ็กเกจสำเร็จ
+                  data:
+                    $ref: "#/components/schemas/Subscription"
+        "400":
+          description: id หรือข้อมูลที่ส่งมาไม่ถูกต้อง (`INVALID_ID` หรือ `VALIDATION_ERROR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidId:
+                  summary: id ไม่ใช่จำนวนเต็มบวก
+                  value:
+                    error:
+                      code: INVALID_ID
+                      message: รหัสต้องเป็นจำนวนเต็มบวก
+                validation:
+                  summary: ข้อมูลไม่ถูกต้อง
+                  value:
+                    error:
+                      code: VALIDATION_ERROR
+                      message: "ข้อมูลไม่ครบถ้วนหรือไม่ถูกต้อง: status ต้องเป็นหนึ่งใน active, expired, cancelled"
+        "404":
+          description: ไม่พบการสมัครหรือสาขาที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                subscriptionNotFound:
+                  value:
+                    error:
+                      code: SUBSCRIPTION_NOT_FOUND
+                      message: ไม่พบการสมัครแพ็กเกจที่ระบุ
+                gymNotFound:
+                  value:
+                    error:
+                      code: GYM_NOT_FOUND
+                      message: ไม่พบสาขาฟิตเนสที่ระบุ
+        "409":
+          description: สมาชิกคนนี้เคยสมัครสาขานี้ไปแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: ALREADY_SUBSCRIBED
+                  message: สมาชิกคนนี้เคยสมัครสาขานี้ไปแล้ว
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Subscriptions]
+      summary: ลบการสมัครแพ็กเกจ (พนักงาน)
+      operationId: deleteSubscription
+      responses:
+        "200":
+          description: ลบสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    example: ลบการสมัครแพ็กเกจสำเร็จ
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          description: ไม่พบการสมัครแพ็กเกจที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: SUBSCRIPTION_NOT_FOUND
+                  message: ไม่พบการสมัครแพ็กเกจที่ระบุ
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  parameters:
+    GymId:
+      name: id
+      in: path
+      required: true
+      description: รหัสสาขา (gym_id)
+      schema:
+        type: integer
+        minimum: 1
+      example: 1
+  schemas:
+    Gym:
+      type: object
+      required: [gym_id, name, address, monthly_fee]
+      properties:
+        gym_id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          maxLength: 150
+          example: Fit Plus Bangsaen
+        address:
+          type: string
+          example: 123 ถนนลงหาดบางแสน ชลบุรี
+        monthly_fee:
+          type: integer
+          minimum: 0
+          description: ค่าบริการรายเดือน (บาท)
+          example: 1200
+    GymInput:
+      type: object
+      required: [name, address, monthly_fee]
+      properties:
+        name:
+          type: string
+          maxLength: 150
+        address:
+          type: string
+        monthly_fee:
+          type: integer
+          minimum: 0
+    Member:
+      type: object
+      required: [member_id, name, email]
+      properties:
+        member_id:
+          type: integer
+          example: 4
+        name:
+          type: string
+          maxLength: 150
+          example: สมศักดิ์ มั่นคง
+        email:
+          type: string
+          format: email
+          maxLength: 150
+          example: somsak@example.com
+    MemberInput:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          maxLength: 150
+        email:
+          type: string
+          format: email
+          maxLength: 150
+    Subscription:
+      type: object
+      required: [subscription_id, member_id, gym_id, start_date, status]
+      properties:
+        subscription_id:
+          type: integer
+          example: 4
+        member_id:
+          type: integer
+          example: 3
+        gym_id:
+          type: integer
+          example: 2
+        start_date:
+          type: string
+          format: date
+          example: "2026-10-10"
+        status:
+          type: string
+          example: active
+    SubscriptionInput:
+      type: object
+      required: [member_id, gym_id]
+      properties:
+        member_id:
+          type: integer
+          minimum: 1
+        gym_id:
+          type: integer
+          minimum: 1
+        start_date:
+          type: string
+          format: date
+          description: ไม่ส่ง = วันที่ปัจจุบัน
+    SubscriptionUpdateInput:
+      type: object
+      required: [gym_id, start_date, status]
+      properties:
+        gym_id:
+          type: integer
+          minimum: 1
+        start_date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [active, expired, cancelled]
+    SubscriptionDetail:
+      type: object
+      required:
+        - subscription_id
+        - member_id
+        - member_name
+        - member_email
+        - gym_id
+        - gym_name
+        - monthly_fee
+        - start_date
+        - status
+      properties:
+        subscription_id:
+          type: integer
+          example: 1
+        member_id:
+          type: integer
+          example: 1
+        member_name:
+          type: string
+          example: สมชาย ใจดี
+        member_email:
+          type: string
+          format: email
+          example: somchai@example.com
+        gym_id:
+          type: integer
+          example: 1
+        gym_name:
+          type: string
+          example: Fit Plus Bangsaen
+        monthly_fee:
+          type: integer
+          example: 1200
+        start_date:
+          type: string
+          format: date
+          example: "2026-08-01"
+        status:
+          type: string
+          example: active
+    WeatherLive:
+      type: object
+      required: [available, source, temperature_c, condition]
+      properties:
+        available:
+          type: boolean
+          enum: [true]
+        source:
+          type: string
+          enum: [open-meteo]
+        temperature_c:
+          type: number
+          example: 31.2
+        humidity_percent:
+          type: number
+          nullable: true
+          example: 68
+        precipitation_mm:
+          type: number
+          nullable: true
+          example: 0
+        wind_speed_kmh:
+          type: number
+          nullable: true
+          example: 12.4
+        condition:
+          type: string
+          example: ท้องฟ้าแจ่มใส
+        observed_at:
+          type: string
+          nullable: true
+          example: "2026-10-10T14:00"
+    WeatherFallback:
+      type: object
+      required: [available, source, message]
+      properties:
+        available:
+          type: boolean
+          enum: [false]
+        source:
+          type: string
+          enum: [fallback]
+        message:
+          type: string
+          example: ไม่สามารถดึงข้อมูลสภาพอากาศได้ในขณะนี้ กรุณาลองใหม่อีกครั้งภายหลัง
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+  responses:
+    ValidationError:
+      description: ข้อมูลที่ส่งมาไม่ครบถ้วนหรือไม่ถูกต้อง หรือ JSON ที่ส่งมาผิดรูปแบบ
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            validation:
+              summary: ข้อมูลไม่ครบหรือไม่ถูกต้อง
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: "ข้อมูลไม่ครบถ้วนหรือไม่ถูกต้อง: name ต้องเป็นข้อความที่ไม่ว่างและยาวไม่เกิน 150 ตัวอักษร"
+            malformedJson:
+              summary: body ไม่ใช่ JSON ที่ถูกต้อง (ข้อความ message ขึ้นกับเวอร์ชัน Node)
+              value:
+                error:
+                  code: entity.parse.failed
+                  message: "Expected property name or '}' in JSON at position 2"
+    InvalidId:
+      description: id ไม่ใช่จำนวนเต็มบวก
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: INVALID_ID
+              message: รหัสต้องเป็นจำนวนเต็มบวก
+    GymNotFound:
+      description: ไม่พบสาขาที่ระบุ
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: GYM_NOT_FOUND
+              message: ไม่พบสาขาฟิตเนสที่ระบุ
+    MemberNotFound:
+      description: ไม่พบสมาชิกที่ระบุ
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: MEMBER_NOT_FOUND
+              message: ไม่พบสมาชิกที่ระบุ
+    PayloadTooLarge:
+      description: "body ใหญ่เกิน 10 KB (ตั้งไว้ใน express.json ด้วย limit 10kb)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: entity.too.large
+              message: request entity too large
+    ServiceUnavailable:
+      description: บริการปลายทางไม่พร้อมใช้งาน (Gateway ตอบ `SERVICE_UNAVAILABLE`) หรือ subscription-service ตรวจข้อมูลกับบริการอื่นไม่ได้ (`DEPENDENCY_UNAVAILABLE`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            gatewayUnavailable:
+              summary: Gateway ติดต่อบริการปลายทางไม่ได้หรือรอเกินเวลา
+              value:
+                error:
+                  code: SERVICE_UNAVAILABLE
+                  message: บริการสาขาไม่พร้อมใช้งานในขณะนี้ กรุณาลองใหม่ภายหลัง
+            dependencyUnavailable:
+              summary: เฉพาะ POST /subscriptions เมื่อ member/gym service ไม่ตอบหลัง retry ครบ
+              value:
+                error:
+                  code: DEPENDENCY_UNAVAILABLE
+                  message: ไม่สามารถตรวจสอบข้อมูลกับบริการสมาชิกได้ในขณะนี้ กรุณาลองใหม่ภายหลัง
+    InternalError:
+      description: ข้อผิดพลาดภายในระบบ
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: INTERNAL_SERVER_ERROR
+              message: เกิดข้อผิดพลาดที่ไม่คาดคิดภายในระบบ
